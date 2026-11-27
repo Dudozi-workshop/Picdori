@@ -29,7 +29,7 @@ class PicdoriBentoHome extends StatelessWidget {
     final compress = _ToolCard(
       key: const ValueKey('picdori-home-compress'),
       title: '용량 줄이기',
-      description: '목표 용량 설정',
+      description: '200KB · 500KB · 직접 입력',
       sticker: 'compress',
       color: PicdoriColors.sage,
       vertical: !compact,
@@ -85,7 +85,7 @@ class PicdoriBentoHome extends StatelessWidget {
               _ToolCard(
                 key: const ValueKey('picdori-home-size'),
                 title: '사진 크기 조정',
-                description: '픽셀 · 비율 · 자르기',
+                description: '가로·세로 픽셀 또는 비율 변경',
                 sticker: 'resize',
                 color: PicdoriColors.peach,
                 onTap: () => onSelect('size'),

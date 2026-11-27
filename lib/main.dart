@@ -214,8 +214,7 @@ class _EditorPageState extends State<EditorPage> {
           'width': output.width, 'height': output.height,
           'format': output.extension.toUpperCase(),
           'mode': _geometry.name,
-          'maxBytes': _customLimit ? int.tryParse(_customKb.text) == null
-            ? null : int.parse(_customKb.text) * 1000 : _maxBytes,
+          'maxBytes': _selectedLimit,
         });
       if (!mounted) return;
       setState(() {
@@ -390,7 +389,7 @@ class _EditorPageState extends State<EditorPage> {
     }
   }
 
-  void _openTool(String tool) {
+  Future<void> _openTool(String tool) async {
     if (_busy || _saving) return;
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
@@ -413,13 +412,20 @@ class _EditorPageState extends State<EditorPage> {
         _ratioPreset = 'original';
         _geometry = GeometryMode.fit;
         _cropBytes = null;
-        _format = _originalFormat == 'PNG'
-            ? OutputFormat.png : OutputFormat.jpg;
+        _format = _initialFormat(_originalFormat);
         _clearResult();
       }
       _maxBytes = tool == 'compress' ? 500000 : null;
       _customLimit = false;
     });
+    if (_source == null) await _pickPhoto(returnHomeOnCancel: true);
+  }
+
+  OutputFormat _initialFormat(String original) {
+    if (_tool == 'format') {
+      return original == 'JPG' ? OutputFormat.png : OutputFormat.jpg;
+    }
+    return original == 'PNG' ? OutputFormat.png : OutputFormat.jpg;
   }
 
   void _returnToEditor() => setState(() => _screen = 'edit');
@@ -466,6 +472,15 @@ class _EditorPageState extends State<EditorPage> {
     }
     return null;
   }
+
+  int? get _selectedLimit {
+    if (!_customLimit) return _maxBytes;
+    final kb = int.tryParse(_customKb.text);
+    return kb == null ? null : kb * 1000;
+  }
+
+  String _limitLabel(int bytes) => bytes % 1000000 == 0
+      ? '${bytes ~/ 1000000} MB' : '${bytes ~/ 1000} KB';
 
   String? get _limitError {
     if (!_customLimit) return null;
@@ -583,7 +598,10 @@ class _EditorPageState extends State<EditorPage> {
     });
   }
 
-  Future<void> _pickPhoto({Map<String, dynamic>? settings}) async {
+  Future<void> _pickPhoto({
+    Map<String, dynamic>? settings,
+    bool returnHomeOnCancel = false,
+  }) async {
     if (_busy || _saving) return;
     setState(() => _busy = true);
     try {
@@ -591,7 +609,12 @@ class _EditorPageState extends State<EditorPage> {
         source: ImageSource.gallery,
         requestFullMetadata: false,
       );
-      if (picked != null) await _importPhoto(picked, settings: settings);
+      if (!mounted) return;
+      if (picked != null) {
+        await _importPhoto(picked, settings: settings);
+      } else if (returnHomeOnCancel) {
+        _returnHome();
+      }
     } on PhotoImportException catch (error) {
       _message(error.message);
     } catch (_) {
@@ -649,8 +672,7 @@ class _EditorPageState extends State<EditorPage> {
       _cropBytes = null;
       _lockedAspect = imported.width / imported.height;
       _keepRatio = true;
-      _format = imported.originalFormat == 'PNG'
-          ? OutputFormat.png : OutputFormat.jpg;
+      _format = _initialFormat(imported.originalFormat);
       _clearResult();
       if (settings != null) {
         _tool = 'all';
@@ -711,9 +733,7 @@ class _EditorPageState extends State<EditorPage> {
     }
     final w = int.parse(_width.text);
     final h = int.parse(_height.text);
-    final limit = _customLimit
-        ? int.parse(_customKb.text) * 1000
-        : _maxBytes;
+    final limit = _selectedLimit;
     setState(() => _busy = true);
     try {
       final result = await compute(
@@ -1239,12 +1259,10 @@ class _EditorPageState extends State<EditorPage> {
     final pixels = _pixelError == null
         ? '${int.parse(_width.text)} × ${int.parse(_height.text)}px'
         : '크기 확인 필요';
-    final maxBytes = _customLimit
-        ? (int.tryParse(_customKb.text) ?? 0) * 1000
-        : _maxBytes;
+    final maxBytes = _selectedLimit;
     final limit = _limitError != null
         ? '용량 확인 필요'
-        : maxBytes == null ? '용량 제한 없음' : '${_byteLabel(maxBytes)} 이하';
+        : maxBytes == null ? '용량 제한 없음' : '${_limitLabel(maxBytes)} 이하';
     return _panel(
       color: PicdoriColors.peach,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1599,6 +1617,17 @@ class _EditorPageState extends State<EditorPage> {
     };
   }
 
+  String get _makeLabel {
+    if (_busy) return '사진 만드는 중';
+    if (_tool == 'format') return '${_format.name.toUpperCase()}로 변환하기';
+    if (_tool == 'size') return '이 크기로 만들기';
+    if (_tool == 'compress' && _limitError == null) {
+      final limit = _selectedLimit;
+      if (limit != null) return '${_limitLabel(limit)} 이하로 만들기';
+    }
+    return '사진 만들기';
+  }
+
   Widget _bottomAction() {
     final resultMode = _screen == 'result' || _screen == 'storedExport';
     return SafeArea(
@@ -1647,9 +1676,10 @@ class _EditorPageState extends State<EditorPage> {
                   ),
                 ],
               )
-            : SizedBox(
-                height: 51,
-                width: double.infinity,
+            : ConstrainedBox(
+                constraints: const BoxConstraints(
+                  minHeight: 51, minWidth: double.infinity,
+                ),
                 child: FilledButton.icon(
                   key: const ValueKey('picdori-make'),
                   onPressed: (_busy || _saving ||
@@ -1659,7 +1689,7 @@ class _EditorPageState extends State<EditorPage> {
                       ? const SizedBox(width: 19, height: 19,
                           child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.arrow_forward_rounded),
-                  label: Text(_busy ? '사진 만드는 중' : '사진 만들기'),
+                  label: Text(_makeLabel, textAlign: TextAlign.center),
                 ),
               ),
       ),

@@ -17,12 +17,17 @@ class _Picker extends ImagePickerPlatform {
 
   final XFile photo;
   bool hasLostPhoto = false;
+  bool cancelPick = false;
+  int pickCount = 0;
 
   @override
   Future<XFile?> getImageFromSource({
     required ImageSource source,
     ImagePickerOptions options = const ImagePickerOptions(),
-  }) async => photo;
+  }) async {
+    pickCount++;
+    return cancelPick ? null : photo;
+  }
 
   @override
   Future<LostDataResponse> getLostData() async => hasLostPhoto
@@ -71,6 +76,41 @@ void main() {
     });
     archive = PicdoriArchive(root: directory);
     await archive.initialize();
+  });
+
+  testWidgets('one tap starts photo selection and cancel returns to the tools',
+      (tester) async {
+    picker.cancelPick = true;
+    await tester.runAsync(() => tester.pumpWidget(const PicdoriApp()));
+    final card = find.byKey(const ValueKey('picdori-home-compress'));
+    await tester.ensureVisible(card);
+    await tester.tap(card);
+    await tester.pumpAndSettle();
+    expect(picker.pickCount, 1);
+    expect(card, findsOneWidget);
+
+    picker.cancelPick = false;
+    await tester.runAsync(() => tester.tap(card));
+    await _waitFor(tester, find.text('500 KB 이하로 만들기'));
+    expect(picker.pickCount, 2);
+    await tester.ensureVisible(find.text('200KB'));
+    await tester.tap(find.text('200KB'));
+    await tester.pump();
+    expect(find.text('200 KB 이하로 만들기'), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    final format = find.byKey(const ValueKey('picdori-home-format'));
+    await tester.ensureVisible(format);
+    await tester.tap(format);
+    await tester.pumpAndSettle();
+    expect(picker.pickCount, 2);
+    expect(find.text('JPG로 변환하기'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('picdori-format-png')));
+    await tester.tap(find.byKey(const ValueKey('picdori-format-png')));
+    await tester.pump();
+    expect(find.text('PNG로 변환하기'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('Android startup reopens the photo lost by the picker', (tester) async {
