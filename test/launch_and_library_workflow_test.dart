@@ -92,6 +92,9 @@ void main() {
     picker.cancelPick = false;
     await tester.runAsync(() => tester.tap(card));
     await _waitFor(tester, find.text('500 KB 이하로 만들기'));
+    expect(tester.widget<Text>(
+      find.byKey(const ValueKey('picdori-output-summary')),
+    ).data, '40 × 30px · PNG · 500 KB 이하');
     expect(picker.pickCount, 2);
     await tester.ensureVisible(find.text('200KB'));
     await tester.tap(find.text('200KB'));

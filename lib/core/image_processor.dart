@@ -81,7 +81,7 @@ ImageResult runImageProcessing(ImageJob job) {
       oriented.height == job.height &&
       decoded.width == job.width &&
       decoded.height == job.height &&
-      _matchesFormat(job.source, job.format)) {
+      matchesImageFormat(job.source, job.format)) {
     return ImageResult(
       bytes: job.source,
       width: job.width,
@@ -170,14 +170,14 @@ ImageResult runImageProcessing(ImageJob job) {
   if (job.maximumBytes != null && bytes.length > job.maximumBytes!) {
     throw const ImageProcessingException('출력 용량 검증에 실패했어요.');
   }
-  if (!_matchesFormat(bytes, job.format)) {
+  if (!matchesImageFormat(bytes, job.format)) {
     throw const ImageProcessingException('출력 파일 형식 검증에 실패했어요.');
   }
   return ImageResult(bytes: bytes, width: checked.width,
       height: checked.height, format: job.format, jpegQuality: quality);
 }
 
-bool _matchesFormat(Uint8List bytes, OutputFormat format) {
+bool matchesImageFormat(Uint8List bytes, OutputFormat format) {
   if (format == OutputFormat.jpg) {
     return bytes.length >= 3 &&
         bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff;
@@ -185,5 +185,6 @@ bool _matchesFormat(Uint8List bytes, OutputFormat format) {
   return bytes.length >= 8 &&
       bytes[0] == 0x89 && bytes[1] == 0x50 &&
       bytes[2] == 0x4e && bytes[3] == 0x47 &&
-      bytes[4] == 0x0d && bytes[5] == 0x0a;
+      bytes[4] == 0x0d && bytes[5] == 0x0a &&
+      bytes[6] == 0x1a && bytes[7] == 0x0a;
 }

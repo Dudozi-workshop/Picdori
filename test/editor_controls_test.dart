@@ -23,7 +23,9 @@ Widget fixture({int width = 120, int height = 90}) => MaterialApp(
 
 void main() {
   testWidgets('home is a warm-cream bento tool picker', (tester) async {
-    await tester.pumpWidget(const PicdoriApp());
+    await tester.pumpWidget(fixture());
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
     for (final key in [
       'picdori-home-size',
       'picdori-home-compress',
@@ -38,7 +40,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('picdori-home-size')));
     await tester.pumpAndSettle();
     expect(find.text('사진 크기 맞추기'), findsOneWidget);
-    expect(find.text('사진 선택하기'), findsOneWidget);
+    expect(find.byKey(const ValueKey('picdori-preview-canvas')), findsOneWidget);
     expect(find.text('목표 파일 용량'), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -50,17 +52,21 @@ void main() {
       tester.view.resetPhysicalSize();
       tester.view.resetDevicePixelRatio();
     });
-    await tester.pumpWidget(const PicdoriApp());
+    await tester.pumpWidget(fixture());
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const ValueKey('picdori-home-all')));
     await tester.tap(find.byKey(const ValueKey('picdori-home-all')));
     await tester.pumpAndSettle();
     expect(find.text('한 번에 맞추기'), findsOneWidget);
-    expect(find.text('사진 선택하기'), findsOneWidget);
+    expect(find.byKey(const ValueKey('picdori-preview-canvas')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
   testWidgets('Android back returns from editor to tool home', (tester) async {
-    await tester.pumpWidget(const PicdoriApp());
+    await tester.pumpWidget(fixture());
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('picdori-home-format')));
     await tester.pumpAndSettle();
     expect(find.text('파일 형식 바꾸기'), findsOneWidget);
