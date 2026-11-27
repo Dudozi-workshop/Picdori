@@ -1,0 +1,45 @@
+name: picdori
+description: Photo pixel, crop, and file-size utility by Dudozi Workshop.
+publish_to: none
+version: 0.8.0+5
+
+environment:
+  sdk: '>=3.11.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  image: ^4.13.1
+  image_picker: ^1.2.4
+  flutter_image_compress: ^2.5.1
+  file_saver: ^0.4.0
+  gal: ^3.0.1
+  crop_your_image: ^2.0.1
+  path_provider: ^2.1.6
+  share_plus: ^13.3.0
+  cross_file: ^0.3.5+1
+  crypto: ^3.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  image_picker_platform_interface: ^2.11.1
+  path_provider_platform_interface: ^2.1.2
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icons/picdori_launcher.png
+    - assets/home/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/icons/picdori_launcher.png
+  adaptive_icon_background: "#F57450"
+  adaptive_icon_foreground: assets/icons/picdori_adaptive_foreground.png
+  # The approved foreground PNG already includes transparent padding.
+  adaptive_icon_foreground_inset: 0
+  remove_alpha_ios: true
