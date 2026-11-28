@@ -25,3 +25,14 @@ flutter build apk --debug
 ```
 
 iOS 시뮬레이터 빌드는 macOS와 Xcode 환경에서 `flutter build ios --simulator --debug`로 실행합니다. GitHub Actions의 `Picdori Flutter checks`에서 검수용 Android APK를 받을 수 있습니다.
+
+### Android 출시 후보 AAB
+
+UX7 출시 후보는 Flutter 3.50.1과 JDK 21로 검증합니다. 위 플랫폼·아이콘 설정을 마친 뒤 아래 명령으로 업로드 키 서명 전 번들을 만듭니다.
+
+```sh
+python3 scripts/prepare_unsigned_android.py
+flutter build appbundle --release --no-pub
+```
+
+출력 파일은 `build/app/outputs/bundle/release/app-release.aab`입니다. Play 내부 테스트에 업로드할 때는 앱에 등록할 업로드 키로 번들에 서명합니다.

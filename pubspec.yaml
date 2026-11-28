@@ -1,7 +1,7 @@
 name: picdori
 description: Photo pixel, crop, and file-size utility by Dudozi Workshop.
 publish_to: none
-version: 0.8.0+5
+version: 0.8.0+7
 
 environment:
   sdk: '>=3.11.0 <4.0.0'
@@ -16,6 +16,7 @@ dependencies:
   gal: ^3.0.1
   crop_your_image: ^2.0.1
   path_provider: ^2.1.6
+  url_launcher: ^6.3.2
   share_plus: ^13.3.0
   cross_file: ^0.3.5+1
   crypto: ^3.0.6

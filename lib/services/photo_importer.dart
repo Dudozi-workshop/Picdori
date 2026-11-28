@@ -82,7 +82,7 @@ class PhotoImporter {
     }
     final label = fromHeic
         ? 'HEIC'
-        : picked.name.toLowerCase().endsWith('.png')
+        : matchesImageFormat(original, OutputFormat.png)
             ? 'PNG' : 'JPG';
 
     return ImportedPhoto(

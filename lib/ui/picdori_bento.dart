@@ -17,10 +17,15 @@ abstract final class PicdoriColors {
 }
 
 class PicdoriBentoHome extends StatelessWidget {
-  const PicdoriBentoHome({super.key, required this.onSelect, this.onSettings});
+  const PicdoriBentoHome({
+    super.key, required this.onSelect, this.onSettings,
+    this.recentSummary, this.onReuse,
+  });
 
   final ValueChanged<String> onSelect;
   final VoidCallback? onSettings;
+  final String? recentSummary;
+  final VoidCallback? onReuse;
 
   @override
   Widget build(BuildContext context) {
@@ -29,7 +34,7 @@ class PicdoriBentoHome extends StatelessWidget {
     final compress = _ToolCard(
       key: const ValueKey('picdori-home-compress'),
       title: '용량 줄이기',
-      description: '목표 용량 설정',
+      description: '200KB · 500KB · 직접 입력',
       sticker: 'compress',
       color: PicdoriColors.sage,
       vertical: !compact,
@@ -85,7 +90,7 @@ class PicdoriBentoHome extends StatelessWidget {
               _ToolCard(
                 key: const ValueKey('picdori-home-size'),
                 title: '사진 크기 조정',
-                description: '픽셀 · 비율 · 자르기',
+                description: '가로·세로 픽셀 또는 비율 변경',
                 sticker: 'resize',
                 color: PicdoriColors.peach,
                 onTap: () => onSelect('size'),
@@ -115,6 +120,25 @@ class PicdoriBentoHome extends StatelessWidget {
                 color: const Color(0xFFFDEDD4),
                 onTap: () => onSelect('all'),
               ),
+              if (recentSummary case final summary?) ...[
+                const SizedBox(height: 14),
+                Material(
+                  color: PicdoriColors.paper,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: const BorderSide(color: PicdoriColors.outline),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: ListTile(
+                    key: const ValueKey('picdori-reuse-last'),
+                    onTap: onReuse,
+                    leading: const Icon(Icons.history, color: PicdoriColors.accent),
+                    title: const Text('마지막 규격 다시 쓰기'),
+                    subtitle: Text(summary),
+                    trailing: const Icon(Icons.chevron_right),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

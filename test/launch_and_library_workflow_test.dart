@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -17,12 +18,17 @@ class _Picker extends ImagePickerPlatform {
 
   final XFile photo;
   bool hasLostPhoto = false;
+  bool cancelPick = false;
+  int pickCount = 0;
 
   @override
   Future<XFile?> getImageFromSource({
     required ImageSource source,
     ImagePickerOptions options = const ImagePickerOptions(),
-  }) async => photo;
+  }) async {
+    pickCount++;
+    return cancelPick ? null : photo;
+  }
 
   @override
   Future<LostDataResponse> getLostData() async => hasLostPhoto
@@ -37,10 +43,13 @@ class _Paths extends PathProviderPlatform {
 
   @override
   Future<String?> getApplicationSupportPath() async => directory.path;
+
+  @override
+  Future<String?> getTemporaryPath() async => directory.path;
 }
 
-Future<void> _waitFor(WidgetTester tester, Finder finder) async {
-  for (var attempt = 0; attempt < 100 && finder.evaluate().isEmpty; attempt++) {
+Future<void> _waitFor(WidgetTester tester, Finder finder, {int attempts = 100}) async {
+  for (var attempt = 0; attempt < attempts && finder.evaluate().isEmpty; attempt++) {
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
     await tester.pump();
   }
@@ -71,6 +80,99 @@ void main() {
     });
     archive = PicdoriArchive(root: directory);
     await archive.initialize();
+  });
+
+  testWidgets('one tap starts photo selection and cancel returns to the tools',
+      (tester) async {
+    picker.cancelPick = true;
+    await tester.runAsync(() => tester.pumpWidget(const PicdoriApp()));
+    final card = find.byKey(const ValueKey('picdori-home-compress'));
+    await tester.ensureVisible(card);
+    await tester.tap(card);
+    await tester.pumpAndSettle();
+    expect(picker.pickCount, 1);
+    expect(card, findsOneWidget);
+
+    picker.cancelPick = false;
+    await tester.runAsync(() => tester.tap(card));
+    await _waitFor(tester, find.text('500 KB 이하로 만들기'));
+    expect(tester.widget<Text>(
+      find.byKey(const ValueKey('picdori-output-summary')),
+    ).data, '40 × 30px · PNG · 500 KB 이하');
+    expect(picker.pickCount, 2);
+    await tester.ensureVisible(find.text('200KB'));
+    await tester.tap(find.text('200KB'));
+    await tester.pump();
+    expect(find.text('200 KB 이하로 만들기'), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    final format = find.byKey(const ValueKey('picdori-home-format'));
+    await tester.ensureVisible(format);
+    await tester.tap(format);
+    await tester.pumpAndSettle();
+    expect(picker.pickCount, 2);
+    expect(find.text('JPG로 변환하기'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('picdori-format-png')));
+    await tester.tap(find.byKey(const ValueKey('picdori-format-png')));
+    await tester.pump();
+    expect(find.text('PNG로 변환하기'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('first 500 KB export survives a gallery failure without reconverting',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final source = img.Image(width: 900, height: 700);
+    final noise = Random(42);
+    for (final pixel in source) {
+      pixel.setRgb(noise.nextInt(256), noise.nextInt(256), noise.nextInt(256));
+    }
+    final original = Uint8List.fromList(img.encodeJpg(source, quality: 100));
+    expect(original.length, greaterThan(500000));
+    picker = _Picker(XFile.fromData(original, name: 'camera.jpg'));
+    ImagePickerPlatform.instance = picker;
+    final written = File('${directory.path}/gallery-copy.jpg');
+    var writes = 0;
+    await tester.runAsync(() => tester.pumpWidget(MaterialApp(
+      home: EditorPage(gallerySaver: (image) async {
+        writes++;
+        if (writes == 1) throw const FileSystemException('gallery unavailable');
+        await written.writeAsBytes(image.bytes, flush: true);
+      }),
+    )));
+
+    final tool = find.byKey(const ValueKey('picdori-home-compress'));
+    await tester.ensureVisible(tool);
+    await tester.runAsync(() => tester.tap(tool));
+    final make = find.text('500 KB 이하로 만들기');
+    await _waitFor(tester, make, attempts: 1000);
+    await tester.runAsync(() => tester.tap(make));
+    final save = find.byWidgetPredicate((widget) =>
+        widget is FilledButton &&
+        widget.key == const ValueKey('picdori-save-gallery') &&
+        widget.onPressed != null);
+    await _waitFor(tester, save, attempts: 1500);
+    expect(find.text('사진첩에 아직 저장하지 않았어요.'), findsOneWidget);
+    expect(written.existsSync(), isFalse);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+    expect(find.text('저장 완료'), findsNothing);
+    final retry = find.byKey(const ValueKey('picdori-retry-save'));
+    await tester.ensureVisible(retry);
+    await tester.runAsync(() => tester.tap(retry));
+    await _waitFor(tester, find.text('저장 완료'));
+    final bytes = written.readAsBytesSync();
+    expect(bytes.length, lessThanOrEqualTo(500000));
+    final reopened = img.decodeJpg(bytes)!;
+    expect([reopened.width, reopened.height], [900, 700]);
+    expect(writes, 2);
+    expect(picker.pickCount, 1);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('Android startup reopens the photo lost by the picker', (tester) async {
@@ -114,6 +216,27 @@ void main() {
     );
     expect(field.controller?.text, '350');
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('last specification is available on home and survives cancelling the picker', (tester) async {
+    await tester.runAsync(() => archive.save(photo(), settings: {
+      'width': 24, 'height': 18, 'format': 'JPG', 'mode': 'fit', 'maxBytes': 350000,
+    }));
+    await tester.runAsync(() => tester.pumpWidget(const PicdoriApp()));
+    final shortcut = find.byKey(const ValueKey('picdori-reuse-last'));
+    await _waitFor(tester, shortcut);
+    expect(find.text('24 × 18px · JPG · 350 KB 이하'), findsOneWidget);
+    await tester.ensureVisible(shortcut);
+    picker.cancelPick = true;
+    await tester.runAsync(() => tester.tap(shortcut));
+    await tester.pumpAndSettle();
+    expect(shortcut, findsOneWidget);
+    picker.cancelPick = false;
+    await tester.runAsync(() => tester.tap(shortcut));
+    final summary = find.byKey(const ValueKey('picdori-output-summary'));
+    await _waitFor(tester, summary);
+    expect(tester.widget<Text>(summary).data, '24 × 18px · JPG · 350 KB 이하');
+    expect(picker.pickCount, 2);
   });
 
   test('trash labels cover the last hour and exact recovery deadline', () {

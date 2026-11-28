@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -23,7 +24,9 @@ Widget fixture({int width = 120, int height = 90}) => MaterialApp(
 
 void main() {
   testWidgets('home is a warm-cream bento tool picker', (tester) async {
-    await tester.pumpWidget(const PicdoriApp());
+    await tester.pumpWidget(fixture());
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
     for (final key in [
       'picdori-home-size',
       'picdori-home-compress',
@@ -38,7 +41,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('picdori-home-size')));
     await tester.pumpAndSettle();
     expect(find.text('사진 크기 맞추기'), findsOneWidget);
-    expect(find.text('사진 선택하기'), findsOneWidget);
+    expect(find.byKey(const ValueKey('picdori-preview-canvas')), findsOneWidget);
     expect(find.text('목표 파일 용량'), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -50,17 +53,21 @@ void main() {
       tester.view.resetPhysicalSize();
       tester.view.resetDevicePixelRatio();
     });
-    await tester.pumpWidget(const PicdoriApp());
+    await tester.pumpWidget(fixture());
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const ValueKey('picdori-home-all')));
     await tester.tap(find.byKey(const ValueKey('picdori-home-all')));
     await tester.pumpAndSettle();
     expect(find.text('한 번에 맞추기'), findsOneWidget);
-    expect(find.text('사진 선택하기'), findsOneWidget);
+    expect(find.byKey(const ValueKey('picdori-preview-canvas')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
   testWidgets('Android back returns from editor to tool home', (tester) async {
-    await tester.pumpWidget(const PicdoriApp());
+    await tester.pumpWidget(fixture());
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('picdori-home-format')));
     await tester.pumpAndSettle();
     expect(find.text('파일 형식 바꾸기'), findsOneWidget);
@@ -105,6 +112,130 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('comparison preserves zoom when switching between original and output', (tester) async {
+    final original = photo(120, 90);
+    final output = photo(60, 45);
+    await tester.pumpWidget(MaterialApp(home: EditorPage(
+      initialSource: original, initialWidth: 120, initialHeight: 90,
+      initialResult: ImageResult(bytes: output, width: 60, height: 45, format: OutputFormat.png),
+    )));
+    await tester.tap(find.text('확대 비교'));
+    await tester.pumpAndSettle();
+    final viewer = find.byType(InteractiveViewer);
+    Uint8List displayed() {
+      final image = tester.widget<Image>(find.descendant(of: viewer, matching: find.byType(Image)));
+      return ((image.image as ResizeImage).imageProvider as MemoryImage).bytes;
+    }
+    expect(displayed(), same(output));
+    final center = tester.getCenter(viewer);
+    final left = await tester.startGesture(center - const Offset(20, 0));
+    final right = await tester.startGesture(center + const Offset(20, 0));
+    await right.moveBy(const Offset(30, 0));
+    await tester.pump();
+    await left.moveBy(const Offset(-35, 0));
+    await tester.pump();
+    await right.up();
+    await left.up();
+    await tester.pumpAndSettle();
+    final transform = find.descendant(of: viewer, matching: find.byType(Transform)).first;
+    final zoom = tester.widget<Transform>(transform).transform.clone();
+    expect(zoom.getMaxScaleOnAxis(), greaterThan(1));
+    await tester.tap(find.text('원본'));
+    await tester.pumpAndSettle();
+    expect(displayed(), same(original));
+    expect(tester.widget<Transform>(transform).transform, zoom);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('공유하기'), findsOneWidget);
+  });
+
+  testWidgets('pixel inputs can be independent and Next focuses height', (tester) async {
+    await tester.pumpWidget(fixture());
+    await tester.ensureVisible(find.text('픽셀 직접 입력'));
+    await tester.tap(find.text('픽셀 직접 입력'));
+    await tester.pumpAndSettle();
+    final lock = find.text('가로·세로 비율 유지');
+    await tester.ensureVisible(lock);
+    await tester.tap(lock);
+    await tester.pump();
+    final height = find.byKey(const ValueKey('picdori-height'));
+    await tester.enterText(find.byKey(const ValueKey('picdori-width')), '80');
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await tester.pump();
+    expect(tester.widget<TextField>(height).focusNode!.hasFocus, isTrue);
+    expect(tester.widget<TextField>(height).controller!.text, '90');
+  });
+
+  testWidgets('invalid limit on a different tab can be corrected in place', (tester) async {
+    await tester.pumpWidget(fixture());
+    await tester.tap(find.text('용량'));
+    await tester.pump();
+    await tester.ensureVisible(find.text('직접 입력'));
+    await tester.tap(find.text('직접 입력'));
+    await tester.pumpAndSettle();
+    final field = find.byKey(const ValueKey('picdori-custom-kb'));
+    await tester.enterText(field, '1');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    final format = find.descendant(of: find.byKey(const ValueKey('picdori-all-tabs')), matching: find.text('형식'));
+    await tester.ensureVisible(format);
+    await tester.tap(format);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('용량 입력 수정하기'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
+    expect(tester.widget<TextField>(field).controller!.text, '1');
+    await tester.enterText(field, '350');
+    await tester.pump();
+    expect(tester.widget<FilledButton>(find.byKey(const ValueKey('picdori-make'))).onPressed, isNotNull);
+  });
+
+  testWidgets('gallery stays distinct from conversion and duplicate taps are blocked',
+      (tester) async {
+    final original = photo(120, 90);
+    final galleryWrite = Completer<void>();
+    var saveCalls = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: EditorPage(
+        initialSource: original,
+        initialWidth: 120,
+        initialHeight: 90,
+        initialResult: ImageResult(
+          bytes: original,
+          width: 120,
+          height: 90,
+          format: OutputFormat.png,
+        ),
+        gallerySaver: (result) {
+          saveCalls++;
+          expect(result.bytes, same(original));
+          return galleryWrite.future;
+        },
+      ),
+    ));
+    final status = find.byKey(const ValueKey('picdori-gallery-status'));
+    final save = find.byKey(const ValueKey('picdori-save-gallery'));
+    final file = find.byKey(const ValueKey('picdori-save-file'));
+    expect(tester.widget<Text>(status).data, '사진첩에 아직 저장하지 않았어요.');
+    expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+
+    await tester.tap(save);
+    await tester.pump();
+    expect(saveCalls, 1);
+    expect(tester.widget<FilledButton>(save).onPressed, isNull);
+    expect(tester.widget<Text>(status).data, '사진첩에 저장 중이에요.');
+
+    galleryWrite.complete();
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(status).data, '사진첩에 저장했어요.');
+    expect(tester.widget<FilledButton>(save).onPressed, isNull);
+    expect(tester.widget<OutlinedButton>(file).onPressed, isNotNull);
+    expect(saveCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('compact result screen keeps both save options reachable',
       (tester) async {
     tester.view.physicalSize = const Size(320, 568);
@@ -141,6 +272,10 @@ void main() {
 
   testWidgets('editor restores its four tabs after the keyboard closes',
       (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 568);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetViewInsets);
     await tester.pumpWidget(fixture());
     expect(find.byType(NavigationBar), findsOneWidget);
@@ -148,6 +283,9 @@ void main() {
     tester.view.viewInsets = const FakeViewPadding(bottom: 240);
     await tester.pump();
     expect(find.byType(NavigationBar), findsNothing);
+    final make = find.byKey(const ValueKey('picdori-make'));
+    expect(make.hitTestable(), findsOneWidget);
+    expect(tester.getBottomRight(make).dy, lessThanOrEqualTo(568 - 240));
     expect(tester.takeException(), isNull);
 
     tester.view.resetViewInsets();

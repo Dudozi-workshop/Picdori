@@ -1,7 +1,10 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/picdori_archive.dart';
 import 'picdori_bento.dart';
+import 'privacy_page.dart';
 
 String formatSize(int n) => n < 1000 ? '$n B'
     : n < 1000000 ? '${(n / 1000).round()} KB'
@@ -189,8 +192,43 @@ class PicdoriHistoryView extends StatelessWidget {
 
 class PicdoriSettingsView extends StatelessWidget {
   const PicdoriSettingsView({super.key, required this.onStorage,
-    required this.onTrash});
+    required this.onTrash, this.openMail = launchUrl});
   final VoidCallback onStorage, onTrash;
+  final Future<bool> Function(Uri) openMail;
+
+  Future<void> _feedback(BuildContext context) async {
+    const address = 'dudoziworkshop@gmail.com';
+    final uri = Uri(scheme: 'mailto', path: address,
+      query: 'subject=${Uri.encodeComponent('[픽도리] 의견 보내기')}');
+    try {
+      if (await openMail(uri)) return;
+    } on PlatformException {
+      // Let the user copy the address when the device cannot open mail.
+    } on MissingPluginException {
+      // The platform has no registered mail launcher.
+    }
+    if (!context.mounted) return;
+    await showDialog<void>(context: context, builder: (dialog) => AlertDialog(
+      title: const Text('이메일로 의견 보내기'),
+      content: const Column(mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('메일 앱을 열 수 없어요. 아래 주소로 의견을 보내 주세요.'),
+          SizedBox(height: 12),
+          SelectableText(address),
+        ]),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('닫기')),
+        FilledButton(onPressed: () async {
+          await Clipboard.setData(const ClipboardData(text: address));
+          if (!dialog.mounted) return;
+          Navigator.pop(dialog);
+          if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('문의 이메일 주소를 복사했어요.')));
+        }, child: const Text('주소 복사')),
+      ],
+    ));
+  }
+
   @override
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.all(16), children: [
@@ -209,10 +247,16 @@ class PicdoriSettingsView extends StatelessWidget {
         onTap: onTrash, trailing: const Icon(Icons.chevron_right)),
       const SizedBox(height: 20),
       const Text('앱 정보', style: TextStyle(fontWeight: FontWeight.w700)),
+      ListTile(leading: const Icon(Icons.mail_outline),
+        title: const Text('의견 보내기'), subtitle: const Text('오류 신고 · 기능 제안 · 문의'),
+        onTap: () => _feedback(context), trailing: const Icon(Icons.chevron_right)),
       const ListTile(leading: Icon(Icons.info_outline),
         title: Text('픽도리'), subtitle: Text('원본 사진은 변경하지 않아요.')),
-      const ListTile(leading: Icon(Icons.shield_outlined),
-        title: Text('보관 데이터'),
-        subtitle: Text('앱 삭제나 데이터 초기화 시 내부 보관본을 잃을 수 있어요.')),
+      ListTile(leading: const Icon(Icons.shield_outlined),
+        title: const Text('개인정보처리방침'),
+        subtitle: const Text('앱 삭제나 데이터 초기화 시 내부 보관본을 잃을 수 있어요.'),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => const PicdoriPrivacyPage()))),
     ]);
 }

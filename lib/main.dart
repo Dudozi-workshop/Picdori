@@ -14,6 +14,7 @@ import 'services/output_saver.dart';
 import 'services/photo_importer.dart';
 import 'widgets/crop_editor.dart';
 import 'ui/picdori_bento.dart';
+import 'ui/photo_compare.dart';
 import 'ui/library_pages.dart';
 import 'ui/management_pages.dart';
 import 'services/picdori_archive.dart';
@@ -79,6 +80,7 @@ class EditorPage extends StatefulWidget {
     this.initialHeight,
     this.initialResult,
     this.initialSaveFailure,
+    this.gallerySaver,
   });
 
   /// Optional photo fixture for widget testing; not used in production.
@@ -89,6 +91,8 @@ class EditorPage extends StatefulWidget {
   final ImageResult? initialResult;
   /// Allows a result recovery state to be rendered in widget tests.
   final String? initialSaveFailure;
+  /// Optional gallery writer for widget tests. Production uses the platform.
+  final Future<void> Function(ImageResult)? gallerySaver;
 
   @override
   State<EditorPage> createState() => _EditorPageState();
@@ -98,6 +102,9 @@ class _EditorPageState extends State<EditorPage> {
   final _picker = ImagePicker();
   final _width = TextEditingController();
   final _height = TextEditingController();
+  final _widthFocus = FocusNode();
+  final _heightFocus = FocusNode();
+  final _limitFocus = FocusNode();
   final _customKb = TextEditingController(text: '200');
 
   Uint8List? _source;
@@ -121,6 +128,8 @@ class _EditorPageState extends State<EditorPage> {
   String? _resultPath;
   String? _saveFailure;
   String? _retrySaveAction;
+  bool _savedToGallery = false;
+  bool _savingToGallery = false;
 
   final PicdoriArchive _archive = PicdoriArchive();
   bool _archiveReady = false;
@@ -170,6 +179,9 @@ class _EditorPageState extends State<EditorPage> {
     _width.dispose();
     _height.dispose();
     _customKb.dispose();
+    _widthFocus.dispose();
+    _heightFocus.dispose();
+    _limitFocus.dispose();
     super.dispose();
   }
 
@@ -214,8 +226,7 @@ class _EditorPageState extends State<EditorPage> {
           'width': output.width, 'height': output.height,
           'format': output.extension.toUpperCase(),
           'mode': _geometry.name,
-          'maxBytes': _customLimit ? int.tryParse(_customKb.text) == null
-            ? null : int.parse(_customKb.text) * 1000 : _maxBytes,
+          'maxBytes': _selectedLimit,
         });
       if (!mounted) return;
       setState(() {
@@ -361,6 +372,8 @@ class _EditorPageState extends State<EditorPage> {
     _resultPath = null;
     _saveFailure = null;
     _retrySaveAction = null;
+    _savedToGallery = false;
+    _savingToGallery = false;
   }
 
   void _clearSaveFailure() {
@@ -390,7 +403,7 @@ class _EditorPageState extends State<EditorPage> {
     }
   }
 
-  void _openTool(String tool) {
+  Future<void> _openTool(String tool) async {
     if (_busy || _saving) return;
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
@@ -413,13 +426,20 @@ class _EditorPageState extends State<EditorPage> {
         _ratioPreset = 'original';
         _geometry = GeometryMode.fit;
         _cropBytes = null;
-        _format = _originalFormat == 'PNG'
-            ? OutputFormat.png : OutputFormat.jpg;
+        _format = _initialFormat(_originalFormat);
         _clearResult();
       }
       _maxBytes = tool == 'compress' ? 500000 : null;
       _customLimit = false;
     });
+    if (_source == null) await _pickPhoto(returnHomeOnCancel: true);
+  }
+
+  OutputFormat _initialFormat(String original) {
+    if (_tool == 'format') {
+      return original == 'JPG' ? OutputFormat.png : OutputFormat.jpg;
+    }
+    return original == 'PNG' ? OutputFormat.png : OutputFormat.jpg;
   }
 
   void _returnToEditor() => setState(() => _screen = 'edit');
@@ -467,13 +487,50 @@ class _EditorPageState extends State<EditorPage> {
     return null;
   }
 
+  int? get _selectedLimit {
+    if (!_customLimit) return _maxBytes;
+    final kb = int.tryParse(_customKb.text);
+    return kb == null || kb < 2 || kb > 0x7fffffffffffffff ~/ 1000
+        ? null : kb * 1000;
+  }
+
+  String _limitLabel(int bytes) => bytes % 1000000 == 0
+      ? '${bytes ~/ 1000000} MB' : '${bytes ~/ 1000} KB';
+
   String? get _limitError {
     if (!_customLimit) return null;
     final kb = int.tryParse(_customKb.text);
     if (kb == null || kb < 2) {
       return '최대 용량은 2KB 이상의 숫자로 입력해 주세요.';
     }
+    if (_selectedLimit == null) return '입력한 용량이 너무 커요. 숫자를 줄여 주세요.';
     return null;
+  }
+
+  void _focusOnNextFrame(FocusNode focus) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && focus.context != null) focus.requestFocus();
+    });
+  }
+
+  String? get _hiddenInvalidTool {
+    final tab = _tool == 'all' ? _allTab : _tool;
+    if (_pixelError != null) return tab != 'size' || _sizeTab != 'pixels' ? 'size' : null;
+    if (_limitError != null && tab != 'compress') return 'compress';
+    return null;
+  }
+
+  void _openInvalidTool(String tab) {
+    final width = int.tryParse(_width.text) ?? 0;
+    final height = int.tryParse(_height.text) ?? 0;
+    final fixHeight = width > 0 && width <= 10000 && (height < 1 || height > 10000);
+    setState(() {
+      if (_tool != tab) _tool = 'all';
+      _allTab = tab;
+      if (tab == 'size') _sizeTab = 'pixels';
+    });
+    final pixelFocus = fixHeight ? _heightFocus : _widthFocus;
+    _focusOnNextFrame(tab == 'compress' ? _limitFocus : pixelFocus);
   }
 
   void _message(String text) {
@@ -583,7 +640,10 @@ class _EditorPageState extends State<EditorPage> {
     });
   }
 
-  Future<void> _pickPhoto({Map<String, dynamic>? settings}) async {
+  Future<void> _pickPhoto({
+    Map<String, dynamic>? settings,
+    bool returnHomeOnCancel = false,
+  }) async {
     if (_busy || _saving) return;
     setState(() => _busy = true);
     try {
@@ -591,7 +651,12 @@ class _EditorPageState extends State<EditorPage> {
         source: ImageSource.gallery,
         requestFullMetadata: false,
       );
-      if (picked != null) await _importPhoto(picked, settings: settings);
+      if (!mounted) return;
+      if (picked != null) {
+        await _importPhoto(picked, settings: settings);
+      } else if (returnHomeOnCancel) {
+        _returnHome();
+      }
     } on PhotoImportException catch (error) {
       _message(error.message);
     } catch (_) {
@@ -649,8 +714,7 @@ class _EditorPageState extends State<EditorPage> {
       _cropBytes = null;
       _lockedAspect = imported.width / imported.height;
       _keepRatio = true;
-      _format = imported.originalFormat == 'PNG'
-          ? OutputFormat.png : OutputFormat.jpg;
+      _format = _initialFormat(imported.originalFormat);
       _clearResult();
       if (settings != null) {
         _tool = 'all';
@@ -709,11 +773,10 @@ class _EditorPageState extends State<EditorPage> {
       _message(_limitError!);
       return;
     }
+    FocusManager.instance.primaryFocus?.unfocus();
     final w = int.parse(_width.text);
     final h = int.parse(_height.text);
-    final limit = _customLimit
-        ? int.parse(_customKb.text) * 1000
-        : _maxBytes;
+    final limit = _selectedLimit;
     setState(() => _busy = true);
     try {
       final result = await compute(
@@ -737,6 +800,7 @@ class _EditorPageState extends State<EditorPage> {
       await file.writeAsBytes(result.bytes, flush: true);
       if (!mounted) return;
       setState(() {
+        _clearResult();
         _result = result;
         _resultPath = file.path;
         _screen = 'result';
@@ -774,11 +838,16 @@ class _EditorPageState extends State<EditorPage> {
 
   Future<void> _saveGallery() async {
     final result = _result;
-    if (result == null || _saving || _busy) return;
-    setState(() => _saving = true);
+    if (result == null || _saving || _busy || _savedToGallery) return;
+    setState(() {
+      _saving = true;
+      _savingToGallery = true;
+    });
     _clearSaveFailure();
     try {
-      await OutputSaver.saveToGallery(result);
+      await (widget.gallerySaver ?? OutputSaver.saveToGallery)(result);
+      if (!mounted) return;
+      setState(() => _savedToGallery = true);
       _message('사진첩에 저장했어요.');
     } catch (_) {
       _setSaveFailure(
@@ -786,7 +855,10 @@ class _EditorPageState extends State<EditorPage> {
         'gallery',
       );
     } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) setState(() {
+        _saving = false;
+        _savingToGallery = false;
+      });
     }
   }
 
@@ -1004,6 +1076,9 @@ class _EditorPageState extends State<EditorPage> {
                 Expanded(child: TextField(
                   key: const ValueKey('picdori-width'),
                   controller: _width,
+                  focusNode: _widthFocus,
+                  textInputAction: TextInputAction.next,
+                  onSubmitted: (_) => _heightFocus.requestFocus(),
                   enabled: !_busy,
                   keyboardType: TextInputType.number,
                   inputFormatters: [
@@ -1021,6 +1096,8 @@ class _EditorPageState extends State<EditorPage> {
                 Expanded(child: TextField(
                   key: const ValueKey('picdori-height'),
                   controller: _height,
+                  focusNode: _heightFocus,
+                  textInputAction: TextInputAction.done,
                   enabled: !_busy,
                   keyboardType: TextInputType.number,
                   inputFormatters: [
@@ -1030,14 +1107,15 @@ class _EditorPageState extends State<EditorPage> {
                   decoration: const InputDecoration(labelText: '세로 px'),
                   onChanged: (_) => _editPixel(widthChanged: false),
                 )),
-                IconButton(
-                  tooltip: _keepRatio
-                      ? '비율 고정 해제' : '가로·세로 비율 고정',
-                  onPressed: _busy ? null : _toggleRatioLock,
-                  icon: Icon(_keepRatio ? Icons.lock_outline
-                      : Icons.lock_open),
-                ),
               ]),
+              const SizedBox(height: 4),
+              FilterChip(
+                selected: _keepRatio,
+                showCheckmark: false,
+                avatar: Icon(_keepRatio ? Icons.link : Icons.link_off, size: 18),
+                label: const Text('가로·세로 비율 유지'),
+                onSelected: _busy ? null : (_) => _toggleRatioLock(),
+              ),
               const SizedBox(height: 12),
               Wrap(spacing: 8, runSpacing: 2, children: [
                 _choice('원본 크기', _preset == 'original',
@@ -1118,16 +1196,21 @@ class _EditorPageState extends State<EditorPage> {
                   () => _setLimit(500000)),
               _choice('1MB', !_customLimit && _maxBytes == 1000000,
                   () => _setLimit(1000000)),
-              _choice('직접 입력', _customLimit, () => setState(() {
-                _customLimit = true;
-                _clearResult();
-              })),
+              _choice('직접 입력', _customLimit, () {
+                setState(() {
+                  _customLimit = true;
+                  _clearResult();
+                });
+                _focusOnNextFrame(_limitFocus);
+              }),
             ]),
             if (_customLimit) ...[
               const SizedBox(height: 12),
               TextField(
                 key: const ValueKey('picdori-custom-kb'),
                 controller: _customKb,
+                focusNode: _limitFocus,
+                textInputAction: TextInputAction.done,
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                 decoration: const InputDecoration(
@@ -1239,12 +1322,10 @@ class _EditorPageState extends State<EditorPage> {
     final pixels = _pixelError == null
         ? '${int.parse(_width.text)} × ${int.parse(_height.text)}px'
         : '크기 확인 필요';
-    final maxBytes = _customLimit
-        ? (int.tryParse(_customKb.text) ?? 0) * 1000
-        : _maxBytes;
+    final maxBytes = _selectedLimit;
     final limit = _limitError != null
         ? '용량 확인 필요'
-        : maxBytes == null ? '용량 제한 없음' : '${_byteLabel(maxBytes)} 이하';
+        : maxBytes == null ? '용량 제한 없음' : '${_limitLabel(maxBytes)} 이하';
     return _panel(
       color: PicdoriColors.peach,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1373,7 +1454,33 @@ class _EditorPageState extends State<EditorPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _photoPreview(resultMode: true),
+          if (_screen == 'result')
+            Stack(children: [
+              _photoPreview(resultMode: true),
+              Positioned(
+                right: 8, bottom: 8,
+                child: FilledButton.tonalIcon(
+                  onPressed: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute(builder: (_) => PhotoComparePage(
+                      source: source,
+                      output: result.bytes,
+                      sourceDetails: '${_originalWidth} × ${_originalHeight}px · '
+                          '$_originalFormat · ${_byteLabel(originalBytes)}',
+                      outputDetails: '${result.width} × ${result.height}px · '
+                          '${result.extension.toUpperCase()} · ${_byteLabel(result.size)}',
+                    )),
+                  ),
+                  icon: const Icon(Icons.zoom_in, size: 20),
+                  label: const Text('확대 비교'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: PicdoriColors.paper, foregroundColor: PicdoriColors.ink,
+                    side: const BorderSide(color: PicdoriColors.outline),
+                  ),
+                ),
+              ),
+            ])
+          else
+            _photoPreview(resultMode: true),
           const SizedBox(height: 12),
           if (_screen == 'storedExport') ...[
             _label(_detailFile!.name, size: 18),
@@ -1599,7 +1706,29 @@ class _EditorPageState extends State<EditorPage> {
     };
   }
 
+  String get _makeLabel {
+    if (_busy) return '사진 만드는 중';
+    if (_pixelError != null) return _hiddenInvalidTool == null ? '가로·세로 값을 확인해 주세요' : '크기 입력 수정하기';
+    if (_limitError != null) return _hiddenInvalidTool == null ? '목표 용량을 확인해 주세요' : '용량 입력 수정하기';
+    if (_tool == 'format') return '${_format.name.toUpperCase()}로 변환하기';
+    if (_tool == 'size') return '이 크기로 만들기';
+    if (_tool == 'compress' && _limitError == null) {
+      final limit = _selectedLimit;
+      if (limit != null) return '${_limitLabel(limit)} 이하로 만들기';
+    }
+    return '사진 만들기';
+  }
+
+  Widget _actionBar() => DecoratedBox(
+    decoration: const BoxDecoration(
+      color: PicdoriColors.paper,
+      border: Border(top: BorderSide(color: PicdoriColors.outline)),
+    ),
+    child: _bottomAction(),
+  );
+
   Widget _bottomAction() {
+    final invalidTool = _hiddenInvalidTool;
     final resultMode = _screen == 'result' || _screen == 'storedExport';
     return SafeArea(
       top: false,
@@ -1610,6 +1739,24 @@ class _EditorPageState extends State<EditorPage> {
             ? Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (_screen == 'result' || _savingToGallery ||
+                      _savedToGallery) ...[
+                    Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        _savedToGallery
+                            ? '사진첩에 저장했어요.'
+                            : _savingToGallery
+                                ? '사진첩에 저장 중이에요.'
+                                : '사진첩에 아직 저장하지 않았어요.',
+                        key: const ValueKey('picdori-gallery-status'),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            color: PicdoriColors.ink, fontSize: 12),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                  ],
                   LayoutBuilder(
                     builder: (context, constraints) {
                       final scale = MediaQuery.textScalerOf(context).scale(1);
@@ -1617,9 +1764,13 @@ class _EditorPageState extends State<EditorPage> {
                           scale > 1.2;
                       final gallery = FilledButton.icon(
                         key: const ValueKey('picdori-save-gallery'),
-                        onPressed: (_saving || _busy) ? null : _saveGallery,
-                        icon: const Icon(Icons.photo_library_outlined),
-                        label: const Text('사진첩 저장'),
+                        onPressed: (_saving || _busy || _savedToGallery)
+                            ? null : _saveGallery,
+                        icon: Icon(_savedToGallery
+                            ? Icons.check : Icons.photo_library_outlined),
+                        label: Text(
+                          _savedToGallery ? '저장 완료' : '사진첩 저장',
+                        ),
                       );
                       final file = OutlinedButton.icon(
                         key: const ValueKey('picdori-save-file'),
@@ -1640,26 +1791,22 @@ class _EditorPageState extends State<EditorPage> {
                       ]);
                     },
                   ),
-                  TextButton.icon(
-                    onPressed: (_saving || _busy) ? null : _share,
-                    icon: const Icon(Icons.share_outlined),
-                    label: const Text('공유하기'),
-                  ),
                 ],
               )
-            : SizedBox(
-                height: 51,
-                width: double.infinity,
+            : ConstrainedBox(
+                constraints: const BoxConstraints(
+                  minHeight: 51, minWidth: double.infinity,
+                ),
                 child: FilledButton.icon(
                   key: const ValueKey('picdori-make'),
-                  onPressed: (_busy || _saving ||
-                          _pixelError != null || _limitError != null)
-                      ? null : _convert,
+                  onPressed: _busy || _saving ? null
+                      : invalidTool != null ? () => _openInvalidTool(invalidTool)
+                      : _pixelError != null || _limitError != null ? null : _convert,
                   icon: _busy
                       ? const SizedBox(width: 19, height: 19,
                           child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.arrow_forward_rounded),
-                  label: Text(_busy ? '사진 만드는 중' : '사진 만들기'),
+                  label: Text(_makeLabel, textAlign: TextAlign.center),
                 ),
               ),
       ),
@@ -1669,6 +1816,7 @@ class _EditorPageState extends State<EditorPage> {
   @override
   Widget build(BuildContext context) {
     final isHome = _screen == 'home';
+    final lastJob = isHome && _archiveReady ? _archive.recent.firstOrNull : null;
     final viewingResult = _screen == 'result' || _screen == 'storedExport';
     final editing = _screen == 'edit' || viewingResult;
     final showNavigation = _screen != 'edit' ||
@@ -1712,6 +1860,14 @@ class _EditorPageState extends State<EditorPage> {
             },
             icon: const Icon(Icons.arrow_back),
           ),
+          actions: [
+            if (viewingResult)
+              IconButton(
+                tooltip: '공유하기',
+                onPressed: (_saving || _busy || _resultPath == null) ? null : _share,
+                icon: const Icon(Icons.share_outlined),
+              ),
+          ],
           title: Text(switch (_screen) {
             'edit' => _toolTitle,
             'result' => '변환 결과',
@@ -1727,20 +1883,28 @@ class _EditorPageState extends State<EditorPage> {
           child: isHome
             ? SingleChildScrollView(
                 child: PicdoriBentoHome(onSelect: _openTool,
+                  recentSummary: lastJob == null ? null : [
+                    if (lastJob.settings['width'] != null && lastJob.settings['height'] != null)
+                      "${lastJob.settings['width']} × ${lastJob.settings['height']}px",
+                    if (lastJob.settings['format'] case final String format) format,
+                    if (lastJob.settings['maxBytes'] case final int limit)
+                      '${formatSize(limit)} 이하',
+                  ].join(' · '),
+                  onReuse: lastJob == null ? null : () => _reuseHistory(lastJob),
                   onSettings: () => _selectTab(3)))
             : editing
-              ? (viewingResult ? _resultBody() : _editorBody())
+              ? (viewingResult ? _resultBody() : LayoutBuilder(
+                  builder: (context, space) => Column(children: [
+                    Expanded(child: _editorBody()),
+                    if (!showNavigation && _source != null && space.maxHeight >= 160)
+                      _actionBar(),
+                  ]),
+                ))
               : _archiveScreen(),
         ),
         bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
-          if (editing && _source != null)
-            DecoratedBox(
-              decoration: const BoxDecoration(
-                color: PicdoriColors.paper,
-                border: Border(top: BorderSide(color: PicdoriColors.outline)),
-              ),
-              child: _bottomAction(),
-            ),
+          if (editing && _source != null && showNavigation)
+            _actionBar(),
           if (showNavigation) NavigationBar(
             height: 68,
             selectedIndex: activeIndex,
