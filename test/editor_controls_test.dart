@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -108,6 +109,52 @@ void main() {
         findsOneWidget);
     expect(find.text('120 × 90px'), findsWidgets);
     expect(find.text('규격 검증 완료 · 용량 변화 없음'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('gallery stays distinct from conversion and duplicate taps are blocked',
+      (tester) async {
+    final original = photo(120, 90);
+    final galleryWrite = Completer<void>();
+    var saveCalls = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: EditorPage(
+        initialSource: original,
+        initialWidth: 120,
+        initialHeight: 90,
+        initialResult: ImageResult(
+          bytes: original,
+          width: 120,
+          height: 90,
+          format: OutputFormat.png,
+        ),
+        gallerySaver: (result) {
+          saveCalls++;
+          expect(result.bytes, same(original));
+          return galleryWrite.future;
+        },
+      ),
+    ));
+    final status = find.byKey(const ValueKey('picdori-gallery-status'));
+    final save = find.byKey(const ValueKey('picdori-save-gallery'));
+    final file = find.byKey(const ValueKey('picdori-save-file'));
+    expect(tester.widget<Text>(status).data, '사진첩에 아직 저장하지 않았어요.');
+    expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+
+    await tester.tap(save);
+    await tester.pump();
+    expect(saveCalls, 1);
+    expect(tester.widget<FilledButton>(save).onPressed, isNull);
+    expect(tester.widget<Text>(status).data, '사진첩에 저장 중이에요.');
+
+    galleryWrite.complete();
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(status).data, '사진첩에 저장했어요.');
+    expect(tester.widget<FilledButton>(save).onPressed, isNull);
+    expect(tester.widget<OutlinedButton>(file).onPressed, isNotNull);
+    expect(saveCalls, 1);
     expect(tester.takeException(), isNull);
   });
 

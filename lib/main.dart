@@ -79,6 +79,7 @@ class EditorPage extends StatefulWidget {
     this.initialHeight,
     this.initialResult,
     this.initialSaveFailure,
+    this.gallerySaver,
   });
 
   /// Optional photo fixture for widget testing; not used in production.
@@ -89,6 +90,8 @@ class EditorPage extends StatefulWidget {
   final ImageResult? initialResult;
   /// Allows a result recovery state to be rendered in widget tests.
   final String? initialSaveFailure;
+  /// Optional gallery writer for widget tests. Production uses the platform.
+  final Future<void> Function(ImageResult)? gallerySaver;
 
   @override
   State<EditorPage> createState() => _EditorPageState();
@@ -121,6 +124,8 @@ class _EditorPageState extends State<EditorPage> {
   String? _resultPath;
   String? _saveFailure;
   String? _retrySaveAction;
+  bool _savedToGallery = false;
+  bool _savingToGallery = false;
 
   final PicdoriArchive _archive = PicdoriArchive();
   bool _archiveReady = false;
@@ -360,6 +365,8 @@ class _EditorPageState extends State<EditorPage> {
     _resultPath = null;
     _saveFailure = null;
     _retrySaveAction = null;
+    _savedToGallery = false;
+    _savingToGallery = false;
   }
 
   void _clearSaveFailure() {
@@ -757,6 +764,7 @@ class _EditorPageState extends State<EditorPage> {
       await file.writeAsBytes(result.bytes, flush: true);
       if (!mounted) return;
       setState(() {
+        _clearResult();
         _result = result;
         _resultPath = file.path;
         _screen = 'result';
@@ -794,11 +802,16 @@ class _EditorPageState extends State<EditorPage> {
 
   Future<void> _saveGallery() async {
     final result = _result;
-    if (result == null || _saving || _busy) return;
-    setState(() => _saving = true);
+    if (result == null || _saving || _busy || _savedToGallery) return;
+    setState(() {
+      _saving = true;
+      _savingToGallery = true;
+    });
     _clearSaveFailure();
     try {
-      await OutputSaver.saveToGallery(result);
+      await (widget.gallerySaver ?? OutputSaver.saveToGallery)(result);
+      if (!mounted) return;
+      setState(() => _savedToGallery = true);
       _message('사진첩에 저장했어요.');
     } catch (_) {
       _setSaveFailure(
@@ -806,7 +819,10 @@ class _EditorPageState extends State<EditorPage> {
         'gallery',
       );
     } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) setState(() {
+        _saving = false;
+        _savingToGallery = false;
+      });
     }
   }
 
@@ -1639,6 +1655,24 @@ class _EditorPageState extends State<EditorPage> {
             ? Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (_screen == 'result' || _savingToGallery ||
+                      _savedToGallery) ...[
+                    Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        _savedToGallery
+                            ? '사진첩에 저장했어요.'
+                            : _savingToGallery
+                                ? '사진첩에 저장 중이에요.'
+                                : '사진첩에 아직 저장하지 않았어요.',
+                        key: const ValueKey('picdori-gallery-status'),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            color: PicdoriColors.ink, fontSize: 12),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                  ],
                   LayoutBuilder(
                     builder: (context, constraints) {
                       final scale = MediaQuery.textScalerOf(context).scale(1);
@@ -1646,9 +1680,13 @@ class _EditorPageState extends State<EditorPage> {
                           scale > 1.2;
                       final gallery = FilledButton.icon(
                         key: const ValueKey('picdori-save-gallery'),
-                        onPressed: (_saving || _busy) ? null : _saveGallery,
-                        icon: const Icon(Icons.photo_library_outlined),
-                        label: const Text('사진첩 저장'),
+                        onPressed: (_saving || _busy || _savedToGallery)
+                            ? null : _saveGallery,
+                        icon: Icon(_savedToGallery
+                            ? Icons.check : Icons.photo_library_outlined),
+                        label: Text(
+                          _savedToGallery ? '저장 완료' : '사진첩 저장',
+                        ),
                       );
                       final file = OutlinedButton.icon(
                         key: const ValueKey('picdori-save-file'),
