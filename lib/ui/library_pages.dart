@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/picdori_archive.dart';
 import 'picdori_bento.dart';
+import 'privacy_page.dart';
 
 String formatSize(int n) => n < 1000 ? '$n B'
     : n < 1000000 ? '${(n / 1000).round()} KB'
@@ -251,8 +252,11 @@ class PicdoriSettingsView extends StatelessWidget {
         onTap: () => _feedback(context), trailing: const Icon(Icons.chevron_right)),
       const ListTile(leading: Icon(Icons.info_outline),
         title: Text('픽도리'), subtitle: Text('원본 사진은 변경하지 않아요.')),
-      const ListTile(leading: Icon(Icons.shield_outlined),
-        title: Text('보관 데이터'),
-        subtitle: Text('앱 삭제나 데이터 초기화 시 내부 보관본을 잃을 수 있어요.')),
+      ListTile(leading: const Icon(Icons.shield_outlined),
+        title: const Text('개인정보처리방침'),
+        subtitle: const Text('앱 삭제나 데이터 초기화 시 내부 보관본을 잃을 수 있어요.'),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => const PicdoriPrivacyPage()))),
     ]);
 }
