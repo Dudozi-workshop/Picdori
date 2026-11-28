@@ -1,0 +1,77 @@
+name: Picdori side-by-side Android QA
+
+on:
+  push:
+    branches: ['qa/first-use-coexist']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: picdori-side-by-side-qa
+  cancel-in-progress: true
+
+jobs:
+  android_qa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Scaffold and configure isolated Android runner
+        run: |
+          flutter create . --project-name picdori --org com.dudozi --platforms android,ios
+          rm -f test/widget_test.dart
+          python3 scripts/configure_ios.py
+          python3 scripts/configure_android.py
+          python3 scripts/verify_platform_brand.py
+          python3 scripts/configure_android_qa.py
+      - run: flutter pub get
+      - name: Generate and verify existing launcher assets
+        run: |
+          dart run flutter_launcher_icons
+          python3 scripts/verify_launcher_assets.py
+      - name: Verify first-use behavior
+        run: |
+          flutter analyze --no-fatal-infos
+          flutter test
+      - name: Build QA-only Android APK
+        run: flutter build apk --debug
+      - name: Verify final APK package, label, providers and launcher
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Android SDK path not set}}"
+          aapt="$(find "$sdk_root/build-tools" -name aapt -type f | sort -V | tail -n 1)"
+          test -x "$aapt"
+          apk=build/app/outputs/flutter-apk/app-debug.apk
+          "$aapt" dump badging "$apk" > badging.txt
+          grep -F "package: name='com.dudozi.picdori.qa'" badging.txt
+          grep -Fx "application-label:'픽도리 QA'" badging.txt
+          grep -F "launchable-activity: name='com.dudozi.picdori.MainActivity'" badging.txt
+          "$aapt" dump xmltree "$apk" AndroidManifest.xml > apk-manifest.txt
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          manifest = Path('apk-manifest.txt').read_text(encoding='utf-8')
+          authorities = re.findall(r'android:authorities[^\n]*?="([^"\n]+)"', manifest)
+          assert authorities, 'APK provider inspection found no authorities'
+          for authority_group in authorities:
+              for authority in authority_group.split(';'):
+                  assert authority.startswith('com.dudozi.picdori.qa.'), authority
+          required = ['android.intent.category.LAUNCHER',
+                      'android.permission.WRITE_EXTERNAL_STORAGE',
+                      'android.permission.INTERNET']
+          assert all(item in manifest for item in required), 'Missing baseline APK declaration'
+          print('Isolated authorities:', authorities)
+          PY
+          mkdir -p qa-artifact
+          cp "$apk" qa-artifact/Picdori-QA.apk
+          cp badging.txt apk-manifest.txt qa-artifact/
+      - name: Upload QA APK and manifest verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: picdori-side-by-side-qa
+          path: qa-artifact/
+          retention-days: 7
+          if-no-files-found: error
