@@ -17,10 +17,15 @@ abstract final class PicdoriColors {
 }
 
 class PicdoriBentoHome extends StatelessWidget {
-  const PicdoriBentoHome({super.key, required this.onSelect, this.onSettings});
+  const PicdoriBentoHome({
+    super.key, required this.onSelect, this.onSettings,
+    this.recentSummary, this.onReuse,
+  });
 
   final ValueChanged<String> onSelect;
   final VoidCallback? onSettings;
+  final String? recentSummary;
+  final VoidCallback? onReuse;
 
   @override
   Widget build(BuildContext context) {
@@ -115,6 +120,25 @@ class PicdoriBentoHome extends StatelessWidget {
                 color: const Color(0xFFFDEDD4),
                 onTap: () => onSelect('all'),
               ),
+              if (recentSummary case final summary?) ...[
+                const SizedBox(height: 14),
+                Material(
+                  color: PicdoriColors.paper,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: const BorderSide(color: PicdoriColors.outline),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: ListTile(
+                    key: const ValueKey('picdori-reuse-last'),
+                    onTap: onReuse,
+                    leading: const Icon(Icons.history, color: PicdoriColors.accent),
+                    title: const Text('마지막 규격 다시 쓰기'),
+                    subtitle: Text(summary),
+                    trailing: const Icon(Icons.chevron_right),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

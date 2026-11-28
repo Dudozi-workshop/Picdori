@@ -218,6 +218,27 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('last specification is available on home and survives cancelling the picker', (tester) async {
+    await tester.runAsync(() => archive.save(photo(), settings: {
+      'width': 24, 'height': 18, 'format': 'JPG', 'mode': 'fit', 'maxBytes': 350000,
+    }));
+    await tester.runAsync(() => tester.pumpWidget(const PicdoriApp()));
+    final shortcut = find.byKey(const ValueKey('picdori-reuse-last'));
+    await _waitFor(tester, shortcut);
+    expect(find.text('24 × 18px · JPG · 350 KB 이하'), findsOneWidget);
+    await tester.ensureVisible(shortcut);
+    picker.cancelPick = true;
+    await tester.runAsync(() => tester.tap(shortcut));
+    await tester.pumpAndSettle();
+    expect(shortcut, findsOneWidget);
+    picker.cancelPick = false;
+    await tester.runAsync(() => tester.tap(shortcut));
+    final summary = find.byKey(const ValueKey('picdori-output-summary'));
+    await _waitFor(tester, summary);
+    expect(tester.widget<Text>(summary).data, '24 × 18px · JPG · 350 KB 이하');
+    expect(picker.pickCount, 2);
+  });
+
   test('trash labels cover the last hour and exact recovery deadline', () {
     expect(recoveryTimeLeft(const Duration(days: 3)), '3일 남음');
     expect(recoveryTimeLeft(const Duration(hours: 5)), '5시간 남음');
