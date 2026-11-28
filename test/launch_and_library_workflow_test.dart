@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -42,10 +43,13 @@ class _Paths extends PathProviderPlatform {
 
   @override
   Future<String?> getApplicationSupportPath() async => directory.path;
+
+  @override
+  Future<String?> getTemporaryPath() async => directory.path;
 }
 
-Future<void> _waitFor(WidgetTester tester, Finder finder) async {
-  for (var attempt = 0; attempt < 100 && finder.evaluate().isEmpty; attempt++) {
+Future<void> _waitFor(WidgetTester tester, Finder finder, {int attempts = 100}) async {
+  for (var attempt = 0; attempt < attempts && finder.evaluate().isEmpty; attempt++) {
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
     await tester.pump();
   }
@@ -113,6 +117,61 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('picdori-format-png')));
     await tester.pump();
     expect(find.text('PNG로 변환하기'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('first 500 KB export survives a gallery failure without reconverting',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final source = img.Image(width: 900, height: 700);
+    final noise = Random(42);
+    for (final pixel in source) {
+      pixel.setRgb(noise.nextInt(256), noise.nextInt(256), noise.nextInt(256));
+    }
+    final original = Uint8List.fromList(img.encodeJpg(source, quality: 100));
+    expect(original.length, greaterThan(500000));
+    picker = _Picker(XFile.fromData(original, name: 'camera.jpg'));
+    ImagePickerPlatform.instance = picker;
+    final written = File('${directory.path}/gallery-copy.jpg');
+    var writes = 0;
+    await tester.runAsync(() => tester.pumpWidget(MaterialApp(
+      home: EditorPage(gallerySaver: (image) async {
+        writes++;
+        if (writes == 1) throw const FileSystemException('gallery unavailable');
+        await written.writeAsBytes(image.bytes, flush: true);
+      }),
+    )));
+
+    final tool = find.byKey(const ValueKey('picdori-home-compress'));
+    await tester.ensureVisible(tool);
+    await tester.runAsync(() => tester.tap(tool));
+    final make = find.text('500 KB 이하로 만들기');
+    await _waitFor(tester, make, attempts: 1000);
+    await tester.runAsync(() => tester.tap(make));
+    final save = find.byWidgetPredicate((widget) =>
+        widget is FilledButton &&
+        widget.key == const ValueKey('picdori-save-gallery') &&
+        widget.onPressed != null);
+    await _waitFor(tester, save, attempts: 1500);
+    expect(find.text('사진첩에 아직 저장하지 않았어요.'), findsOneWidget);
+    expect(written.existsSync(), isFalse);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+    expect(find.text('저장 완료'), findsNothing);
+    final retry = find.byKey(const ValueKey('picdori-retry-save'));
+    await tester.ensureVisible(retry);
+    await tester.runAsync(() => tester.tap(retry));
+    await _waitFor(tester, find.text('저장 완료'));
+    final bytes = written.readAsBytesSync();
+    expect(bytes.length, lessThanOrEqualTo(500000));
+    final reopened = img.decodeJpg(bytes)!;
+    expect([reopened.width, reopened.height], [900, 700]);
+    expect(writes, 2);
+    expect(picker.pickCount, 1);
     expect(tester.takeException(), isNull);
   });
 
